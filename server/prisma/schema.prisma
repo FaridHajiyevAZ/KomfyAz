@@ -1,0 +1,253 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── USER MANAGEMENT ─────────────────────────────────────────
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String?   @unique
+  phone         String?   @unique
+  passwordHash  String    @map("password_hash")
+  role          UserRole  @default(CUSTOMER)
+  firstName     String?   @map("first_name")
+  lastName      String?   @map("last_name")
+  isVerified    Boolean   @default(false) @map("is_verified")
+  consentAt     DateTime? @map("consent_at")
+  deletedAt     DateTime? @map("deleted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  refreshTokens        RefreshToken[]
+  productRegistrations ProductRegistration[]
+  supportTickets       SupportTicket[]
+
+  @@index([email])
+  @@index([phone])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  token     String   @unique
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ─── PRODUCT CATALOG ─────────────────────────────────────────
+
+model MattressModel {
+  id                 String  @id @default(uuid()) @db.Uuid
+  name               String  @unique
+  slug               String  @unique
+  description        String?
+  warrantyMonths     Int     @map("warranty_months") @default(120) // 10 years default
+  isActive           Boolean @default(true) @map("is_active")
+  releasedAt         DateTime? @map("released_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  productRegistrations ProductRegistration[]
+
+  @@map("mattress_models")
+}
+
+model PurchaseSource {
+  id        String  @id @default(uuid()) @db.Uuid
+  name      String  @unique
+  type      String  // 'store', 'dealer', 'online'
+  isActive  Boolean @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  productRegistrations ProductRegistration[]
+
+  @@map("purchase_sources")
+}
+
+// ─── PRODUCT REGISTRATION & WARRANTY ─────────────────────────
+
+enum RegistrationStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  INFO_REQUESTED
+}
+
+enum WarrantyStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  VOIDED
+}
+
+model ProductRegistration {
+  id                    String             @id @default(uuid()) @db.Uuid
+  userId                String             @map("user_id") @db.Uuid
+  mattressModelId       String             @map("mattress_model_id") @db.Uuid
+  purchaseSourceId      String             @map("purchase_source_id") @db.Uuid
+  purchaseDate          DateTime           @map("purchase_date") @db.Date
+  receivedUndamaged     Boolean            @map("received_undamaged")
+  infoAccurate          Boolean            @map("info_accurate")
+  registrationStatus    RegistrationStatus @default(PENDING_REVIEW) @map("registration_status")
+  rejectionReason       String?            @map("rejection_reason")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  user           User           @relation(fields: [userId], references: [id])
+  mattressModel  MattressModel  @relation(fields: [mattressModelId], references: [id])
+  purchaseSource PurchaseSource @relation(fields: [purchaseSourceId], references: [id])
+  warranty       Warranty?
+  photos         RegistrationPhoto[]
+  adminNotes     AdminNote[]
+
+  @@index([userId])
+  @@index([registrationStatus])
+  @@index([purchaseDate])
+  @@map("product_registrations")
+}
+
+model Warranty {
+  id                    String         @id @default(uuid()) @db.Uuid
+  productRegistrationId String         @unique @map("product_registration_id") @db.Uuid
+  status                WarrantyStatus @default(PENDING)
+  startDate             DateTime?      @map("start_date") @db.Date
+  endDate               DateTime?      @map("end_date") @db.Date
+  activatedAt           DateTime?      @map("activated_at")
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+
+  productRegistration ProductRegistration @relation(fields: [productRegistrationId], references: [id])
+
+  @@index([status])
+  @@index([endDate])
+  @@map("warranties")
+}
+
+enum PhotoType {
+  LABEL
+  INVOICE
+  ADDITIONAL
+}
+
+model RegistrationPhoto {
+  id                    String   @id @default(uuid()) @db.Uuid
+  productRegistrationId String   @map("product_registration_id") @db.Uuid
+  type                  PhotoType
+  originalFilename      String   @map("original_filename")
+  storagePath           String   @map("storage_path")
+  mimeType              String   @map("mime_type")
+  fileSize              Int      @map("file_size")
+  sha256Hash            String?  @map("sha256_hash")
+  perceptualHash        String?  @map("perceptual_hash")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  productRegistration ProductRegistration @relation(fields: [productRegistrationId], references: [id])
+
+  @@index([sha256Hash])
+  @@index([perceptualHash])
+  @@index([productRegistrationId])
+  @@map("registration_photos")
+}
+
+// ─── SUPPORT TICKETS ─────────────────────────────────────────
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model SupportTicket {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  subject   String
+  status    TicketStatus   @default(OPEN)
+  priority  TicketPriority @default(MEDIUM)
+  tags      String[]       @default([])
+  closedAt  DateTime?      @map("closed_at")
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  user       User            @relation(fields: [userId], references: [id])
+  messages   TicketMessage[]
+  adminNotes AdminNote[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  ticketId  String   @map("ticket_id") @db.Uuid
+  senderType String  @map("sender_type") // 'customer' or 'admin'
+  senderId  String   @map("sender_id") @db.Uuid
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket      SupportTicket      @relation(fields: [ticketId], references: [id])
+  attachments TicketAttachment[]
+
+  @@index([ticketId])
+  @@map("ticket_messages")
+}
+
+model TicketAttachment {
+  id               String   @id @default(uuid()) @db.Uuid
+  messageId        String   @map("message_id") @db.Uuid
+  originalFilename String   @map("original_filename")
+  storagePath      String   @map("storage_path")
+  mimeType         String   @map("mime_type")
+  fileSize         Int      @map("file_size")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  message TicketMessage @relation(fields: [messageId], references: [id])
+
+  @@index([messageId])
+  @@map("ticket_attachments")
+}
+
+// ─── ADMIN NOTES ─────────────────────────────────────────────
+
+model AdminNote {
+  id                    String  @id @default(uuid()) @db.Uuid
+  adminId               String  @map("admin_id") @db.Uuid
+  productRegistrationId String? @map("product_registration_id") @db.Uuid
+  ticketId              String? @map("ticket_id") @db.Uuid
+  content               String
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  productRegistration ProductRegistration? @relation(fields: [productRegistrationId], references: [id])
+  ticket              SupportTicket?       @relation(fields: [ticketId], references: [id])
+
+  @@index([productRegistrationId])
+  @@index([ticketId])
+  @@map("admin_notes")
+}
